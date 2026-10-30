@@ -33,6 +33,7 @@ object Store {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val main = Handler(Looper.getMainLooper())
     private var llm: LlmInference? = null
+    @Volatile private var onResult: ((String, Boolean) -> Unit)? = null
 
     fun init(c: Context) {
         if (::app.isInitialized) return
@@ -71,6 +72,7 @@ object Store {
         val o = LlmInference.LlmInferenceOptions.builder()
             .setModelPath(modelFile().absolutePath)
             .setMaxTokens(1024)
+            .setResultListener { partial, done -> onResult?.invoke(partial, done) }
             .build()
         return LlmInference.createFromOptions(app, o).also { llm = it }
     }
@@ -106,7 +108,8 @@ object Store {
         scope.launch {
             val acc = StringBuilder()
             try {
-                engine().generateResponseAsync(prompt) { partial, done ->
+                val e = engine()
+                onResult = { partial, done ->
                     acc.append(partial)
                     val t = acc.toString()
                     main.post {
@@ -114,6 +117,7 @@ object Store {
                         if (done) { busy.value = false; save() }
                     }
                 }
+                e.generateResponseAsync(prompt)
             } catch (e: Throwable) {
                 main.post {
                     msgs[idx] = Msg("ai", "Xatolik: ${e.message}")
